@@ -1,0 +1,61 @@
+{
+  "devin_session_token": {
+    "type": "string",
+    "description": "Devin 会话 Token",
+    "hint": "/devin login 自动写入，或手动填入（需带 devin-session-token$ 或 sk- 前缀）",
+    "default": ""
+  },
+  "search_hosts": {
+    "type": "list",
+    "description": "搜索服务地址列表（双节点容灾）",
+    "hint": "默认 server.codeium.com 与 server.self-serve.windsurf.com，前一个失败自动切换后一个",
+    "default": [
+      "https://server.codeium.com",
+      "https://server.self-serve.windsurf.com"
+    ]
+  },
+  "max_results": {
+    "type": "int",
+    "description": "搜索返回最大条数",
+    "hint": "范围 1-10",
+    "default": 5,
+    "slider": {
+      "min": 1,
+      "max": 10,
+      "step": 1
+    }
+  },
+  "timeout_seconds": {
+    "type": "int",
+    "description": "请求超时时间（秒）",
+    "default": 20,
+    "slider": {
+      "min": 5,
+      "max": 60,
+      "step": 5
+    }
+  },
+  "retryable_status_codes": {
+    "type": "list",
+    "description": "触发切换下一个服务节点的 HTTP 状态码",
+    "hint": "默认 429/500/502/503/504；401/403 始终按会话失效处理，200 空结果自动切换下一节点",
+    "default": [429, 500, 502, 503, 504]
+  },
+  "proxy": {
+    "type": "string",
+    "description": "HTTP 代理地址",
+    "hint": "留空不使用代理",
+    "default": ""
+  },
+  "show_sources": {
+    "type": "bool",
+    "description": "搜索结果中显示来源 URL",
+    "default": true
+  },
+  "enable_llm_tool": {
+    "type": "bool",
+    "description": "注册 LLM 函数工具 devin-web-search",
+    "hint": "关闭后对模型隐藏搜索工具，手动命令仍可用",
+    "default": true
+  }
+}
