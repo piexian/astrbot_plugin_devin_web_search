@@ -8,8 +8,8 @@
   },
   "search_hosts": {
     "type": "list",
-    "description": "搜索服务地址列表（双节点容灾）",
-    "hint": "默认 server.codeium.com 与 server.self-serve.windsurf.com，前一个失败自动切换后一个",
+    "description": "搜索服务地址列表",
+    "hint": "前一个失败自动切换后一个",
     "default": [
       "https://server.codeium.com",
       "https://server.self-serve.windsurf.com"
@@ -45,7 +45,7 @@
   "max_retries": {
     "type": "int",
     "description": "重试次数",
-    "hint": "默认 3 次；等待时间优先遵守 Retry-After 头，否则指数退避（1/2/4 秒，上限 8 秒）",
+    "hint": "默认 3 次；等待时间优先遵守 Retry-After 头，否则指数退避",
     "default": 3,
     "slider": {
       "min": 1,
