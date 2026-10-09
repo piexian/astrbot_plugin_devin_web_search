@@ -69,7 +69,7 @@ async def exchange_code(
     if post_json is None:
         post_json = default_post_json
     try:
-        status, payload = await post_json(
+        status, payload, _headers = await post_json(
             TOKEN_ENDPOINT,
             headers={"content-type": "application/json", "accept": "application/json"},
             payload={"code": code, "code_verifier": verifier},

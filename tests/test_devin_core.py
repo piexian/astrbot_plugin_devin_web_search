@@ -14,6 +14,7 @@ import aiohttp
 from astrbot_plugin_devin_web_search.tools.devin_oauth import (
     AUTHORIZE_ENDPOINT,
     build_authorize_url,
+    exchange_code,
     generate_pkce_pair,
 )
 from astrbot_plugin_devin_web_search.tools.devin_search import (
@@ -82,6 +83,21 @@ class StubConfig(dict):
 
 
 class PkceAndTokenTests(unittest.TestCase):
+    def test_exchange_code_reads_three_tuple_response(self):
+        """default_post_json 返回 (状态码, JSON, 响应头)，解包必须匹配。"""
+
+        async def post_json(url, *, headers, payload, timeout=20, proxy=""):
+            self.assertEqual("https://api.devin.ai/auth/cli/token", url)
+            self.assertEqual(
+                {"code": "the-code", "code_verifier": "the-verifier"}, payload
+            )
+            return 200, {"token": "raw.jwt.token"}, {}
+
+        self.assertEqual(
+            "raw.jwt.token",
+            asyncio.run(exchange_code("the-code", "the-verifier", post_json=post_json)),
+        )
+
     def test_pkce_challenge_and_authorize_url(self):
         verifier, challenge = generate_pkce_pair()
         expected = (
