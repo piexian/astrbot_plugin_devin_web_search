@@ -34,7 +34,7 @@
 
 | 配置项 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| `devin_session_token` | list | 是 | 会话凭据（支持多个），`/devin login` 自动追加，或手动添加（需带 `devin-session-token$` 或 `sk-` 前缀，不自动补齐） |
+| `devin_session_token` | list | 是 | 会话凭据（支持多个），`/devin login` 自动追加，或手动添加（devin token，需带 `devin-session-token$` 前缀，不自动补齐） |
 
 > 手填时不校验格式，前缀填错会直接返回 401。多个凭据按顺序使用，过期的自动跳过。
 

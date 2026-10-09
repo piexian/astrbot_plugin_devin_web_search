@@ -2,7 +2,7 @@
   "devin_session_token": {
     "type": "list",
     "description": "Devin 会话 Token",
-    "hint": "/devin login 自动追加，或手动添加（需带 devin-session-token$ 或 sk- 前缀）",
+    "hint": "/devin login 自动追加，或手动添加（devin token，需带 devin-session-token$ 前缀）",
     "secret": true,
     "default": []
   },
