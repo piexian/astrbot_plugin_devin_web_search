@@ -37,7 +37,7 @@
 | `devin_session_token` | list | 是 | 会话凭据（支持多个），`/devin login` 自动追加，或手动添加（devin token，需带 `devin-session-token$` 前缀，不自动补齐） |
 
 > 手填时不校验格式，前缀填错会直接返回 401。多个凭据按顺序使用，过期的自动跳过。
-
+> 也可以去[Devin](https://app.devin.ai/org/piexian/settings/devin-api?tab=pats)控制台获取cli密钥填入
 ### 连接设置
 
 | 配置项 | 类型 | 必填 | 说明 |
@@ -127,10 +127,6 @@ astrbot_plugin_devin_web_search/
 
 - [AstrBot 插件开发文档](https://docs.astrbot.app/dev/star/plugin-new.html)
 - [Issues](https://github.com/piexian/astrbot_plugin_devin_web_search/issues)
-
-## 🔗 相关链接
-
-- [AstrBot](https://docs.astrbot.app/)
 
 ## 更新日志
 
