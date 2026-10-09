@@ -131,7 +131,3 @@ astrbot_plugin_devin_web_search/
 ## 更新日志
 
 查看 [CHANGELOG.md](https://github.com/piexian/astrbot_plugin_devin_web_search/blob/master/CHANGELOG.md) 了解版本更新历史。
-
-## 许可
-
-MIT License
