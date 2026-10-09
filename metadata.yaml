@@ -1,7 +1,7 @@
 name: astrbot_plugin_devin_web_search
 display_name: Devin联网搜索
 desc: 使用免费的devin账号让astrbot获取devin的web_search能力
-version: v0.1.0
+version: v0.2.0
 author: piexian
 repo: https://github.com/piexian/astrbot_plugin_devin_web_search
 astrbot_version: ">=4.9.2"
