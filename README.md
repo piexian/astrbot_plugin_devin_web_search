@@ -18,7 +18,7 @@
 - `/devin login`（管理员）- 发送授权链接，浏览器登录后把一次性 code 发回会话即完成登录，token 自动写入插件配置
 - `/devin status` - 查看登录状态与过期时间；`/devin logout`（管理员）清除 token；`/devin cancel` 取消在途登录
 - `/devin search <query>` - 手动执行搜索
-- LLM Tool (`devin-web-search`) - 供 LLM 自动调用的联网搜索工具，可在配置中关闭
+- LLM Tool (`devin-web-search`) - 供 LLM 自动调用的联网搜索工具，启停由 AstrBot 本体控制
 - 双服务节点容灾（server.codeium.com / server.self-serve.windsurf.com）：单节点网络错误、可配置状态码、200 空结果均自动切换下一节点；全部节点 401/403 判定会话被吊销
 
 ## 安装
@@ -34,9 +34,9 @@
 
 | 配置项 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| `devin_session_token` | string | 是 | 会话凭据，`/devin login` 自动写入，或手动填入（需带 `devin-session-token$` 或 `sk-` 前缀，不自动补齐） |
+| `devin_session_token` | list | 是 | 会话凭据（支持多个），`/devin login` 自动追加，或手动添加（需带 `devin-session-token$` 或 `sk-` 前缀，不自动补齐） |
 
-> 手填时不校验格式，前缀填错会直接返回 401。
+> 手填时不校验格式，前缀填错会直接返回 401。多个凭据按顺序使用，过期的自动跳过。
 
 ### 连接设置
 
@@ -50,9 +50,10 @@
 
 | 配置项 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| `retryable_status_codes` | list | 否 | 触发切换下一服务节点的 HTTP 状态码（默认: [429, 500, 502, 503, 504]） |
+| `retryable_status_codes` | list | 否 | 重试状态码（默认: [429, 500, 502, 503, 504]） |
+| `max_retries` | int | 否 | 单节点重试次数（默认: 3） |
 
-> 401/403 始终按会话失效处理；HTTP 200 空结果同样切换下一节点，全部节点都空才返回空结果。
+> 等待时间优先遵守服务端 `Retry-After` 头，否则指数退避 1/2/4 秒（上限 8 秒）。401/403 始终按会话失效处理；HTTP 200 空结果同样切换下一节点，全部节点都空才返回空结果。
 
 ### 输出设置
 
@@ -61,11 +62,6 @@
 | `max_results` | int | 否 | 返回条数，范围 1-10（默认: 5） |
 | `show_sources` | bool | 否 | 结果中显示来源 URL（默认: true） |
 
-### 工具设置
-
-| 配置项 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `enable_llm_tool` | bool | 否 | 注册 LLM Tool `devin-web-search`（默认: true），关闭后对模型隐藏搜索工具，手动命令仍可用 |
 
 ## 使用
 

@@ -30,6 +30,18 @@ def normalize_session_token(raw: object) -> str:
     return str(raw or "").strip()
 
 
+def normalize_token_list(raw: object) -> list[str]:
+    """配置中的凭据归一化为列表，去重并去空。"""
+    if not isinstance(raw, (list, tuple)):
+        return []
+    tokens: list[str] = []
+    for item in raw:
+        token = str(item or "").strip()
+        if token and token not in tokens:
+            tokens.append(token)
+    return tokens
+
+
 def token_expiry(
     token: object,
     *,
@@ -127,30 +139,48 @@ class SessionManager:
         self.config = config
         self._revoked = False
 
+    def get_tokens(self) -> list[str]:
+        return normalize_token_list(self.config.get(TOKEN_KEY, ""))
+
     def get_token(self) -> str:
-        return normalize_session_token(self.config.get(TOKEN_KEY, ""))
+        tokens = self.get_tokens()
+        return tokens[0] if tokens else ""
 
     def save_token(self, raw_token: object) -> datetime:
-        """写入配置并落盘，返回过期时间；OA 换来的裸 JWT 在此补齐前缀。"""
+        """追加凭据到配置并落盘，返回过期时间；OA 换来的裸 JWT 在此补齐前缀。"""
         token = normalize_session_token(raw_token)
-        if token and not token.startswith((TOKEN_PREFIX, WS_TOKEN_PREFIX)):
+        if not token:
+            raise LoginRequiredError("登录结果为空。", reason="none")
+        if not token.startswith((TOKEN_PREFIX, WS_TOKEN_PREFIX)):
             token = TOKEN_PREFIX + token
-        self.config[TOKEN_KEY] = token
+        tokens = self.get_tokens()
+        if token not in tokens:
+            tokens.append(token)
+        self.config[TOKEN_KEY] = tokens
         self._save_config()
         self._revoked = False
         return token_expiry(token)
 
     def clear_token(self) -> bool:
-        """清除已保存的 token；返回清除前是否存在。"""
-        had = bool(self.get_token())
-        self.config[TOKEN_KEY] = ""
+        """清除全部已保存的凭据；返回清除前是否存在。"""
+        had = bool(self.get_tokens())
+        self.config[TOKEN_KEY] = []
         self._save_config()
         self._revoked = False
         return had
 
+    def usable_tokens(self) -> list[str]:
+        """返回当前未过期的凭据，按配置顺序。"""
+        if self._revoked:
+            return []
+        now = datetime.now(timezone.utc)
+        return [t for t in self.get_tokens() if token_expiry(t) > now]
+
     def expiry(self) -> datetime | None:
-        token = self.get_token()
-        return token_expiry(token) if token else None
+        tokens = self.usable_tokens()
+        if not tokens:
+            return None
+        return max(token_expiry(t) for t in tokens)
 
     @property
     def revoked(self) -> bool:
@@ -163,31 +193,33 @@ class SessionManager:
         self._revoked = False
 
     def is_logged_in(self) -> bool:
-        token = self.get_token()
-        if not token or self._revoked:
-            return False
-        return token_expiry(token) > datetime.now(timezone.utc)
+        return bool(self.usable_tokens())
 
     def require_token(self) -> str:
-        """返回可用 token；未登录/已吊销/已过期时抛 LoginRequiredError。"""
-        token = self.get_token()
-        if not token:
+        """返回首个可用凭据；无可用凭据时抛 LoginRequiredError。"""
+        if not self.get_tokens():
             raise LoginRequiredError("尚未登录 Devin。", reason="none")
         if self._revoked:
             raise LoginRequiredError("Devin 会话已失效。", reason="revoked")
-        if token_expiry(token) <= datetime.now(timezone.utc):
+        tokens = self.usable_tokens()
+        if not tokens:
             raise LoginRequiredError("Devin token 已过期。", reason="expired")
-        return token
+        return tokens[0]
 
     def status_text(self) -> str:
-        if not self.get_token():
+        total = len(self.get_tokens())
+        if not total:
             return "未登录 Devin。管理员可执行 /devin login 发起登录。"
         if self._revoked:
             return "Devin 会话已失效（服务端拒绝），请重新执行 /devin login。"
+        usable = self.usable_tokens()
+        if not usable:
+            return "Devin token 已过期，请重新执行 /devin login。"
         expiry = self.expiry() or datetime.now(timezone.utc)
-        if expiry <= datetime.now(timezone.utc):
-            return f"Devin token 已过期（{format_datetime(expiry)}），请重新执行 /devin login。"
-        return f"已登录 Devin。token 过期时间：{format_datetime(expiry)}。"
+        return (
+            f"已登录 Devin。可用凭据 {len(usable)}/{total} 个，"
+            f"最晚过期时间：{format_datetime(expiry)}。"
+        )
 
     def _save_config(self) -> None:
         save = getattr(self.config, "save_config", None)

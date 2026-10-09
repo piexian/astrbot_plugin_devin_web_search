@@ -12,7 +12,7 @@ from astrbot_plugin_devin_web_search.main import DevinWebSearchPlugin
 from astrbot_plugin_devin_web_search.tools.devin_search import DevinAuthRevokedError
 from astrbot_plugin_devin_web_search.tools.devin_session import TOKEN_KEY
 
-LOGGED_IN = {TOKEN_KEY: "devin-session-token$stub"}
+LOGGED_IN = {TOKEN_KEY: ["devin-session-token$stub"]}
 
 
 class FakeConfig(dict):
@@ -100,7 +100,7 @@ class LoginFlowTests(unittest.TestCase):
         with patch.object(main_mod, "exchange_code", fake_exchange):
             asyncio.run(plugin._handle_code(pending, event, "some-code"))
 
-        self.assertTrue(config[TOKEN_KEY].startswith("devin-session-token$"))
+        self.assertTrue(config[TOKEN_KEY][0].startswith("devin-session-token$"))
         self.assertEqual(1, config.save_calls)
 
     def test_invalid_code_keeps_login_waiting(self):
@@ -160,17 +160,14 @@ class SearchEntryTests(unittest.TestCase):
 
         with patch.object(main_mod, "web_search", boom):
             result = asyncio.run(plugin.run_tool_search("q"))
-        self.assertIn("重新执行 /devin login", result)
+        self.assertIn("登录已失效", result)
         self.assertTrue(plugin.session_mgr.revoked)
 
-    def test_tool_registration_can_be_disabled(self):
+    def test_tool_always_registered(self):
+        # 启停由 AstrBot 本体控制，插件始终注册
         plugin, _config, context = make_plugin()
         asyncio.run(plugin.initialize())
         self.assertEqual(1, len(context.tools))
-
-        plugin, _config, context = make_plugin({"enable_llm_tool": False})
-        asyncio.run(plugin.initialize())
-        self.assertEqual(0, len(context.tools))
 
 
 if __name__ == "__main__":

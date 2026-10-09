@@ -26,6 +26,41 @@ MAX_QUERY_LENGTH = 8192
 SNIPPET_PREVIEW_LENGTH = 300
 
 DEFAULT_RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
+DEFAULT_MAX_RETRIES = 3
+RETRY_BASE_DELAY = 1.0
+RETRY_MAX_DELAY = 8.0
+MAX_RETRY_AFTER_SECONDS = 60.0
+
+
+def retry_after_seconds(headers: dict) -> float | None:
+    """解析 Retry-After（秒数或 HTTP 日期）；缺失或非法返回 None。"""
+    raw = (headers or {}).get("Retry-After") or (headers or {}).get("retry-after")
+    if raw is None:
+        return None
+    try:
+        seconds = float(str(raw).strip())
+    except ValueError:
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, MAX_RETRY_AFTER_SECONDS)
+
+
+def backoff_delay(attempt: int, headers: dict) -> float:
+    """优先使用服务端 Retry-After，否则指数退避（1/2/4... 秒，上限 8 秒）。"""
+    hinted = retry_after_seconds(headers)
+    if hinted is not None:
+        return hinted
+    return min(RETRY_BASE_DELAY * (2 ** max(0, attempt)), RETRY_MAX_DELAY)
+
+
+def normalize_retries(raw: object, default: int = DEFAULT_MAX_RETRIES) -> int:
+    """重试次数归一化为 >=1 的整数（非法值回退默认）。"""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return max(1, default)
+    return max(1, value)
 
 
 class DevinSearchError(Exception):
@@ -87,8 +122,8 @@ def build_search_payload(token: str, query: str, limit: int) -> dict:
 
 async def default_post_json(
     url: str, *, headers: dict, payload: dict, timeout: float = 20, proxy: str = ""
-) -> tuple[int, Any]:
-    """POST JSON 并返回 (HTTP 状态码, 解析后的 JSON 或 None)。"""
+) -> tuple[int, Any, dict]:
+    """POST JSON 并返回 (HTTP 状态码, 解析后的 JSON 或 None, 响应头)。"""
     timeout_config = aiohttp.ClientTimeout(total=max(1.0, float(timeout)))
     async with aiohttp.ClientSession(timeout=timeout_config) as session:
         async with session.post(
@@ -102,7 +137,7 @@ async def default_post_json(
                 parsed = json.loads(text) if text else None
             except ValueError:
                 parsed = None
-            return response.status, parsed
+            return response.status, parsed, dict(response.headers)
 
 
 def parse_search_results(
@@ -169,18 +204,24 @@ async def web_search(
     hosts=None,
     timeout: float = 20,
     proxy: str = "",
+    max_retries: object = DEFAULT_MAX_RETRIES,
     retryable_status_codes=None,
+    sleep=None,
     post_json=None,
 ) -> list[dict]:
-    """执行搜索；单节点网络错误、空结果或可重试状态码自动切换下一节点。
+    """执行搜索；单节点网络错误、空结果或可重试状态码自动重试并切换下一节点。
 
-    全部节点 401/403 时抛 DevinAuthRevokedError；至少一个节点给出空结果时返回空列表；
-    其余失败抛 DevinSearchError。
+    每个节点在耗尽 max_retries 次重试后切换下一节点；重试等待优先遵守
+    Retry-After 头，否则指数退避。全部节点 401/403 时抛 DevinAuthRevokedError；
+    至少一个节点给出空结果时返回空列表；其余失败抛 DevinSearchError。
     """
     if post_json is None:
         post_json = default_post_json
+    if sleep is None:
+        sleep = asyncio.sleep
     cleaned_query = sanitize_query(query)
     cleaned_limit = normalize_limit(limit, default=5)
+    attempts = normalize_retries(max_retries)
     retryable = {
         int(code) for code in (retryable_status_codes or DEFAULT_RETRYABLE_STATUS_CODES)
     }
@@ -196,41 +237,48 @@ async def web_search(
     saw_empty = False
     for host in host_list:
         url = host + SEARCH_PATH
-        try:
-            status, payload = await post_json(
-                url,
-                headers=REQUEST_HEADERS,
-                payload=build_search_payload(token, cleaned_query, cleaned_limit),
-                timeout=timeout,
-                proxy=proxy,
+        for attempt in range(attempts):
+            try:
+                status, payload, headers = await post_json(
+                    url,
+                    headers=REQUEST_HEADERS,
+                    payload=build_search_payload(token, cleaned_query, cleaned_limit),
+                    timeout=timeout,
+                    proxy=proxy,
+                )
+            except (
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+                TimeoutError,
+                OSError,
+            ) as exc:
+                errors.append(f"{host}（{type(exc).__name__}）")
+                if attempt + 1 < attempts:
+                    await sleep(backoff_delay(attempt, {}))
+                    continue
+                break
+            if status == 200:
+                results = parse_search_results(
+                    payload, max_items=cleaned_limit, redact_secrets_for=token
+                )
+                if results:
+                    return results
+                saw_empty = True
+                errors.append(f"{host}（空结果）")
+                break
+            if status in (401, 403):
+                auth_failures += 1
+                errors.append(f"{host}（HTTP {status}）")
+                break
+            if status in retryable:
+                errors.append(f"{host}（HTTP {status}）")
+                if attempt + 1 < attempts:
+                    await sleep(backoff_delay(attempt, headers))
+                    continue
+                break
+            raise DevinSearchError(
+                f"搜索请求被拒绝（HTTP {status}，{host}）", status=status, host=host
             )
-        except (
-            aiohttp.ClientError,
-            asyncio.TimeoutError,
-            TimeoutError,
-            OSError,
-        ) as exc:
-            errors.append(f"{host}（{type(exc).__name__}）")
-            continue
-        if status == 200:
-            results = parse_search_results(
-                payload, max_items=cleaned_limit, redact_secrets_for=token
-            )
-            if results:
-                return results
-            saw_empty = True
-            errors.append(f"{host}（空结果）")
-            continue
-        if status in (401, 403):
-            auth_failures += 1
-            errors.append(f"{host}（HTTP {status}）")
-            continue
-        if status in retryable:
-            errors.append(f"{host}（HTTP {status}）")
-            continue
-        raise DevinSearchError(
-            f"搜索请求被拒绝（HTTP {status}，{host}）", status=status, host=host
-        )
     if auth_failures == len(host_list):
         raise DevinAuthRevokedError(
             "Devin 会话已被吊销（所有服务节点均返回 401/403），请重新登录。"

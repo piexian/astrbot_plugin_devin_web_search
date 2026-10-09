@@ -36,19 +36,31 @@ TOKEN = "devin-session-token$abcdef123456"
 
 
 def make_post_json(responses):
-    """按顺序返回 (status, payload) 或异常，并记录调用参数。"""
+    """按顺序返回 (status, payload, headers) 或异常，并记录调用参数。"""
     calls: list[dict] = []
     remaining = list(responses)
 
     async def post_json(url, *, headers, payload, timeout=20, proxy=""):
         calls.append({"url": url, "headers": headers, "payload": payload})
-        item = remaining.pop(0) if remaining else (200, {"results": []})
+        item = remaining.pop(0) if remaining else (200, {"results": []}, {})
         if isinstance(item, BaseException):
             raise item
+        if len(item) == 2:
+            return item[0], item[1], {}
         return item
 
     post_json.calls = calls
     return post_json
+
+
+class NoSleep:
+    """替换 asyncio.sleep，记录调用以避免测试真实等待。"""
+
+    def __init__(self):
+        self.delays: list[float] = []
+
+    async def __call__(self, delay):
+        self.delays.append(delay)
 
 
 def jwt_with_exp(exp: int) -> str:
@@ -87,17 +99,24 @@ class PkceAndTokenTests(unittest.TestCase):
     def test_token_prefix_and_expiry(self):
         manager = SessionManager(StubConfig())
         # 手填的值原样保留，不自动补前缀
-        manager.config[TOKEN_KEY] = "raw.no-prefix"
+        manager.config[TOKEN_KEY] = ["raw.no-prefix"]
         self.assertEqual("raw.no-prefix", manager.get_token())
-        manager.config[TOKEN_KEY] = "sk-abc-key"
+        manager.config[TOKEN_KEY] = ["sk-abc-key"]
         self.assertEqual("sk-abc-key", manager.get_token())
 
         # OA 写入时才补 devin-session-token$ 前缀
+        manager = SessionManager(StubConfig())
         manager.save_token(jwt_with_exp(int(time.time()) + 3600))
         self.assertTrue(
-            manager.config[TOKEN_KEY].startswith("devin-session-token$"),
+            manager.config[TOKEN_KEY][0].startswith("devin-session-token$"),
             manager.config[TOKEN_KEY],
         )
+
+        # 多凭据按序追加，过期的仍保留但不参与调度
+        manager.save_token("sk-second")
+        manager.save_token(jwt_with_exp(int(time.time()) - 10))
+        self.assertEqual(3, len(manager.config[TOKEN_KEY]))
+        self.assertEqual(2, len(manager.usable_tokens()))
 
         exp = int(time.time()) + 3600
         self.assertAlmostEqual(
@@ -118,7 +137,8 @@ class PkceAndTokenTests(unittest.TestCase):
         manager.mark_revoked()
         self.assertFalse(manager.is_logged_in())
 
-        manager.clear_revoked()
+        # 只有一个已过期凭据时视为未登录
+        manager = SessionManager(StubConfig())
         manager.save_token(jwt_with_exp(int(time.time()) - 10))
         self.assertFalse(manager.is_logged_in())
 
@@ -163,19 +183,56 @@ class SearchBehaviorTests(unittest.TestCase):
     def test_retryable_status_codes_are_configurable(self):
         self.assertEqual({429, 500, 502, 503, 504}, set(DEFAULT_RETRYABLE_STATUS_CODES))
 
-        post_json = make_post_json(
-            [
-                (503, None),
-                (200, {"results": [{"url": "https://e.com", "title": "T5"}]}),
-            ]
-        )
+        # 503 不在重试列表内：直接失败（错误带状态码）
+        post_json = make_post_json([(503, None, {})])
+        sleeper = NoSleep()
         with self.assertRaises(DevinSearchError) as ctx:
             asyncio.run(
                 web_search(
-                    TOKEN, "q", post_json=post_json, retryable_status_codes=[429, 500]
+                    TOKEN,
+                    "q",
+                    post_json=post_json,
+                    retryable_status_codes=[429, 500],
+                    sleep=sleeper,
                 )
             )
         self.assertEqual(503, ctx.exception.status)
+        self.assertEqual([], sleeper.delays)
+
+    def test_retries_with_backoff_and_retry_after(self):
+        # 默认 3 次重试：503 重试耗尽后切换下一节点成功
+        sleeper = NoSleep()
+        post_json = make_post_json(
+            [
+                (503, None, {}),
+                (503, None, {}),
+                (503, None, {}),
+                (200, {"results": [{"url": "https://g.com", "title": "T7"}]}, {}),
+            ]
+        )
+        self.assertEqual(
+            "T7",
+            asyncio.run(web_search(TOKEN, "q", post_json=post_json, sleep=sleeper))[0][
+                "title"
+            ],
+        )
+        self.assertEqual([1.0, 2.0], sleeper.delays)
+
+        # 遵守 Retry-After 头（优先于指数退避）
+        sleeper = NoSleep()
+        post_json = make_post_json(
+            [
+                (429, None, {"Retry-After": "5"}),
+                (200, {"results": [{"url": "https://h.com", "title": "T8"}]}, {}),
+            ]
+        )
+        self.assertEqual(
+            "T8",
+            asyncio.run(web_search(TOKEN, "q", post_json=post_json, sleep=sleeper))[0][
+                "title"
+            ],
+        )
+        self.assertEqual([5.0], sleeper.delays)
 
         post_json = make_post_json(
             [
@@ -197,10 +254,15 @@ class SearchBehaviorTests(unittest.TestCase):
         with self.assertRaises(DevinAuthRevokedError):
             asyncio.run(web_search(TOKEN, "q", post_json=post_json))
 
-        post_json = make_post_json([(401, None), (500, None)])
+        # 401 + 500（重试耗尽）：非全部鉴权失败，按搜索错误抛出
+        post_json = make_post_json(
+            [(401, None, {}), (500, None, {}), (500, None, {}), (500, None, {})]
+        )
+        sleeper = NoSleep()
         with self.assertRaises(DevinSearchError) as ctx:
-            asyncio.run(web_search(TOKEN, "q", post_json=post_json))
+            asyncio.run(web_search(TOKEN, "q", post_json=post_json, sleep=sleeper))
         self.assertNotIsInstance(ctx.exception, DevinAuthRevokedError)
+        self.assertEqual([1.0, 2.0], sleeper.delays)
 
     def test_results_drop_unsafe_urls_and_token(self):
         payload = {

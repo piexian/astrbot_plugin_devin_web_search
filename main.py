@@ -27,6 +27,7 @@ from .tools.devin_oauth import (
     validate_code,
 )
 from .tools.devin_search import (
+    DEFAULT_MAX_RETRIES,
     DEFAULT_RETRYABLE_STATUS_CODES,
     DEFAULT_SEARCH_HOSTS,
     DevinAuthRevokedError,
@@ -80,13 +81,12 @@ class DevinWebSearchPlugin(Star):
         self._terminating = False
 
     async def initialize(self):
-        """校验配置并按配置注册 LLM 工具。"""
+        """校验配置并注册 LLM 工具（启停由 AstrBot 本体控制）。"""
         hosts = self._search_hosts()
-        if bool(self._cfg("enable_llm_tool", True)):
-            from .tools.devin_tools import DevinWebSearchTool
+        from .tools.devin_tools import DevinWebSearchTool
 
-            self.context.add_llm_tools(DevinWebSearchTool(plugin=self))
-            logger.info(f"[{PLUGIN_NAME}] LLM 工具 devin-web-search 已注册")
+        self.context.add_llm_tools(DevinWebSearchTool(plugin=self))
+        logger.info(f"[{PLUGIN_NAME}] LLM 工具 devin-web-search 已注册")
         logged_in = "已登录" if self.session_mgr.is_logged_in() else "未登录"
         logger.info(
             f"[{PLUGIN_NAME}] 初始化完成：{logged_in}，搜索服务节点 {len(hosts)} 个"
@@ -201,6 +201,7 @@ class DevinWebSearchPlugin(Star):
             limit=limit if limit else self._cfg("max_results", 5),
             hosts=self._search_hosts(),
             timeout=self._timeout_seconds(),
+            max_retries=self._max_retries(),
             retryable_status_codes=self._retryable_status_codes(),
             proxy=str(self._cfg("proxy", "") or ""),
         )
@@ -436,6 +437,12 @@ class DevinWebSearchPlugin(Star):
         except (TypeError, ValueError):
             return set(DEFAULT_RETRYABLE_STATUS_CODES)
         return codes or set(DEFAULT_RETRYABLE_STATUS_CODES)
+
+    def _max_retries(self) -> int:
+        try:
+            return max(1, int(self._cfg("max_retries", DEFAULT_MAX_RETRIES)))
+        except (TypeError, ValueError):
+            return DEFAULT_MAX_RETRIES
 
     def _search_hosts(self) -> list[str]:
         raw = self._cfg("search_hosts", None) or DEFAULT_SEARCH_HOSTS

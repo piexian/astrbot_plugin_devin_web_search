@@ -1,9 +1,10 @@
 {
   "devin_session_token": {
-    "type": "string",
+    "type": "list",
     "description": "Devin 会话 Token",
-    "hint": "/devin login 自动写入，或手动填入（需带 devin-session-token$ 或 sk- 前缀）",
-    "default": ""
+    "hint": "/devin login 自动追加，或手动添加（需带 devin-session-token$ 或 sk- 前缀）",
+    "secret": true,
+    "default": []
   },
   "search_hosts": {
     "type": "list",
@@ -37,9 +38,20 @@
   },
   "retryable_status_codes": {
     "type": "list",
-    "description": "触发切换下一个服务节点的 HTTP 状态码",
+    "description": "重试状态码",
     "hint": "默认 429/500/502/503/504；401/403 始终按会话失效处理，200 空结果自动切换下一节点",
     "default": [429, 500, 502, 503, 504]
+  },
+  "max_retries": {
+    "type": "int",
+    "description": "重试次数",
+    "hint": "默认 3 次；等待时间优先遵守 Retry-After 头，否则指数退避（1/2/4 秒，上限 8 秒）",
+    "default": 3,
+    "slider": {
+      "min": 1,
+      "max": 5,
+      "step": 1
+    }
   },
   "proxy": {
     "type": "string",
@@ -50,12 +62,6 @@
   "show_sources": {
     "type": "bool",
     "description": "搜索结果中显示来源 URL",
-    "default": true
-  },
-  "enable_llm_tool": {
-    "type": "bool",
-    "description": "注册 LLM 函数工具 devin-web-search",
-    "hint": "关闭后对模型隐藏搜索工具，手动命令仍可用",
     "default": true
   }
 }
